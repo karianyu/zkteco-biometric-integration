@@ -105,11 +105,11 @@ class ZKTecoBiometricSettings(Document):
                             "frequency": self.fetch_frequency,
                             "stopped": 0,
                             "create_log": 1,
-                            "cron_format": (
-                                self.cron_expression
-                                if self.fetch_frequency == "Cron"
-                                else None
-                            ),
+                            # "cron_format": (
+                            #     self.cron_expression
+                            #     if self.fetch_frequency == "Cron"
+                            #     else None
+                            # ),
                         }
                     )
                     scheduled_job.insert(ignore_permissions=True)
@@ -120,11 +120,11 @@ class ZKTecoBiometricSettings(Document):
                     {
                         "stopped": 0,
                         "frequency": self.fetch_frequency,
-                        "cron_format": (
-                            self.cron_expression
-                            if self.fetch_frequency == "Cron"
-                            else None
-                        ),
+                        # "cron_format": (
+                        #     self.cron_expression
+                        #     if self.fetch_frequency == "Cron"
+                        #     else None
+                        # ),
                     },
                 )
 
