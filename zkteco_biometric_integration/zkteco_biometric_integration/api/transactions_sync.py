@@ -98,7 +98,7 @@ def create_employee_checkin(transaction: dict) -> None:
     if frappe.db.exists(
         "Employee Checkin",
         {
-            "employee": transaction.get("emp_code"),
+            "employee": frappe.get_all("Employee", filters={"attendance_device_id" : transaction.get("emp_code")})[0]["name"] if frappe.get_all("Employee", filters={"attendance_device_id" : transaction.get("emp_code")}) else None ,
             "time": transaction.get("punch_time"),
             "log_type": map_checkin(transaction.get("punch_state_display")),
         },
@@ -110,7 +110,7 @@ def create_employee_checkin(transaction: dict) -> None:
         employee_checkin = frappe.get_doc(
             {
                 "doctype": "Employee Checkin",
-                "employee": transaction.get("emp_code"),
+                "employee": frappe.get_all("Employee", filters={"attendance_device_id" : transaction.get("emp_code")})[0]["name"] if frappe.get_all("Employee", filters={"attendance_device_id" : transaction.get("emp_code")}) else None,
                 "time": transaction.get("punch_time"),
                 "log_type": map_checkin(transaction.get("punch_state_display")),
             }
