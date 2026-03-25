@@ -11,7 +11,6 @@ from frappe.integrations.utils import create_request_log
 
 @frappe.whitelist()
 def handle_employee_checkin():
-
     biometric_settings = frappe.get_all(
         "ZKTeco Biometric Settings", filters={"is_fetch_enabled": 1}
     )
@@ -53,7 +52,7 @@ def get_transactions(setting_doc: Document) -> list[dict]:
     end_time = get_datetime()
 
     params = {
-        "start_time": (start_time.strftime("%Y-%m-%d %H:%M:%S")),
+        # "start_time": (start_time.strftime("%Y-%m-%d %H:%M:%S")),
         "end_time": (end_time.strftime("%Y-%m-%d %H:%M:%S")),
     }
 
@@ -94,7 +93,6 @@ def get_transactions(setting_doc: Document) -> list[dict]:
 
 
 def create_employee_checkin(transaction: dict) -> None:
-
     if frappe.db.exists(
         "Employee Checkin",
         {
@@ -113,7 +111,7 @@ def create_employee_checkin(transaction: dict) -> None:
                 "employee": frappe.get_all("Employee", filters={"attendance_device_id" : transaction.get("emp_code")})[0]["name"] if frappe.get_all("Employee", filters={"attendance_device_id" : transaction.get("emp_code")}) else None,
                 "time": transaction.get("punch_time"),
                 "log_type": map_checkin(transaction.get("punch_state_display")),
-                "device_id":transaction.get("terminal_sn")
+                "device_id":transaction.get("terminal_sn"),
             }
         )
         employee_checkin.insert(ignore_permissions=True)
