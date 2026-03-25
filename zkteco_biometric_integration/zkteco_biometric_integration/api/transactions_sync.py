@@ -113,6 +113,7 @@ def create_employee_checkin(transaction: dict) -> None:
                 "employee": frappe.get_all("Employee", filters={"attendance_device_id" : transaction.get("emp_code")})[0]["name"] if frappe.get_all("Employee", filters={"attendance_device_id" : transaction.get("emp_code")}) else None,
                 "time": transaction.get("punch_time"),
                 "log_type": map_checkin(transaction.get("punch_state_display")),
+                "device_id":transaction.get("terminal_sn")
             }
         )
         employee_checkin.insert(ignore_permissions=True)
