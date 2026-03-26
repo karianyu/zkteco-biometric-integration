@@ -6,11 +6,12 @@ from zkteco_biometric_integration.zkteco_biometric_integration.utils import (
     map_checkin,
 )
 from frappe.utils import get_datetime
+from datetime import date,time, datetime
 from frappe.integrations.utils import create_request_log
 
 
 @frappe.whitelist()
-def handle_employee_checkin():
+def handle_employee_checkin(start_time = None):
     biometric_settings = frappe.get_all(
         "ZKTeco Biometric Settings", filters={"is_fetch_enabled": 1}
     )
@@ -18,7 +19,7 @@ def handle_employee_checkin():
     for setting in biometric_settings:
         setting_doc = frappe.get_doc("ZKTeco Biometric Settings", setting.name)
 
-        transactions = get_transactions(setting_doc)
+        transactions = get_transactions(setting_doc, start_time)
         if not transactions:
             return
 
@@ -32,7 +33,7 @@ def handle_employee_checkin():
 
 
 @frappe.whitelist(allow_guest=True)
-def get_transactions(setting_doc: Document) -> list[dict]:
+def get_transactions(setting_doc: Document, start_time = None) -> list[dict]:
 
     if setting_doc.is_token_expired():
         setting_doc.save()
@@ -44,16 +45,14 @@ def get_transactions(setting_doc: Document) -> list[dict]:
 
     url = f"{setting_doc.url}/iclock/api/transactions/"
 
-    start_time = (
-        setting_doc.last_fetched_time
-        if setting_doc.last_fetched_time
-        else get_datetime()
-    )
     end_time = get_datetime()
+    today = date.today()
+    start_time = (datetime.combine(today, time()).strftime("%Y-%m-%d %H:%M:%S")) if start_time == None else start_time
 
     params = {
-        # "start_time": (start_time.strftime("%Y-%m-%d %H:%M:%S")),
+        "start_time": start_time,
         "end_time": (end_time.strftime("%Y-%m-%d %H:%M:%S")),
+        "page_size": 1000,
     }
 
     integration_request_log = create_request_log(
