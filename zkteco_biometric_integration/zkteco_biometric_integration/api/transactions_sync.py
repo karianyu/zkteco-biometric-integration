@@ -47,12 +47,12 @@ def get_transactions(setting_doc: Document, start_time = None) -> list[dict]:
 
     end_time = get_datetime()
     today = date.today()
-    start_time = (datetime.combine(today, time()).strftime("%Y-%m-%d %H:%M:%S")) if start_time == None else start_time
+    start_time = (datetime.combine(today, time()).strftime("%Y-%m-%d %H:%M:%S"))
 
     params = {
         "start_time": start_time,
         "end_time": (end_time.strftime("%Y-%m-%d %H:%M:%S")),
-        "page_size": 1000,
+        "page_size": 1500,
     }
 
     integration_request_log = create_request_log(
