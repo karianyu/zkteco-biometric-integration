@@ -46,17 +46,16 @@ def get_transactions(setting_doc: Document, start_time = None) -> list[dict]:
     url = f"{setting_doc.url}/iclock/api/transactions/"
 
     end_time = get_datetime()
-    today = date.today()
 
-    # start_time = (
-    #     setting_doc.last_fetched_time
-    #     if setting_doc.last_fetched_time
-    #     else get_datetime()
-    # )
-    start_time = (datetime.combine(today, time()).strftime("%Y-%m-%d %H:%M:%S"))
+    start_time = (
+        setting_doc.last_fetched_time
+        if setting_doc.last_fetched_time
+        else None
+    )
+    # start_time = (datetime.combine(today, time()).strftime("%Y-%m-%d %H:%M:%S"))
 
     params = {
-        "start_time": start_time,
+        "start_time": (start_time.strftime("%Y-%m-%d %H:%M:%S")) if start_time else None,
         "end_time": (end_time.strftime("%Y-%m-%d %H:%M:%S")),
         "page_size": 1500,
     }
