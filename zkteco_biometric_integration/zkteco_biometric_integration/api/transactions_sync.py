@@ -51,13 +51,13 @@ def get_transactions(setting_doc: Document, start_time = None) -> list[dict]:
         setting_doc.last_fetched_time
         if setting_doc.last_fetched_time
         else None
-    )
+    ) if not start_time else start_time
     # start_time = (datetime.combine(today, time()).strftime("%Y-%m-%d %H:%M:%S"))
 
     params = {
         "start_time": (start_time.strftime("%Y-%m-%d %H:%M:%S")) if start_time else None,
         "end_time": (end_time.strftime("%Y-%m-%d %H:%M:%S")),
-        "page_size": 1500,
+        "page_size": 2500,
     }
 
     integration_request_log = create_request_log(
