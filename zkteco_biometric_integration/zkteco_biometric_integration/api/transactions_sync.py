@@ -6,58 +6,94 @@ from zkteco_biometric_integration.zkteco_biometric_integration.utils import (
     map_checkin,
 )
 from frappe.utils import get_datetime
-from datetime import date,time, datetime
 from frappe.integrations.utils import create_request_log
 
 
 @frappe.whitelist()
-def handle_employee_checkin(start_time = None):
+def handle_employee_checkin(start_time=None):
     biometric_settings = frappe.get_all(
         "ZKTeco Biometric Settings", filters={"is_fetch_enabled": 1}
     )
 
     for setting in biometric_settings:
-        setting_doc = frappe.get_doc("ZKTeco Biometric Settings", setting.name)
-
-        transactions = get_transactions(setting_doc, start_time)
-        if not transactions:
-            return
-
-        for txn in transactions:
-            if emp_checkin := create_employee_checkin(txn):
-                (
-                    manage_user(emp_checkin)
-                    if setting_doc.enable_mandatory_checkin
-                    else None
-                )
+        # Isolate each device: a failure on one must not stop the others.
+        try:
+            sync_device_checkins(setting.name, start_time)
+        except Exception:
+            frappe.db.rollback()
+            frappe.log_error(
+                title="ZKTeco Checkin Sync Failed",
+                message=f"Device setting: {setting.name}\n\n{frappe.get_traceback()}",
+            )
 
 
-@frappe.whitelist(allow_guest=True)
-def get_transactions(setting_doc: Document, start_time = None) -> list[dict]:
+def sync_device_checkins(setting_name: str, start_time=None) -> None:
+    setting_doc = frappe.get_doc("ZKTeco Biometric Settings", setting_name)
 
-    if setting_doc.is_token_expired():
-        setting_doc.save()
+    ensure_valid_token(setting_doc)
 
+    # Upper bound is captured once and becomes the new watermark only after the
+    # whole window is processed successfully, so a crash mid-run never advances
+    # past unprocessed punches. Overlapping windows are safe (checkins dedupe).
+    end_time = get_datetime()
+    window_start = start_time or setting_doc.last_fetched_time
+    # Accept either a datetime or a string watermark.
+    if window_start:
+        window_start = get_datetime(window_start)
+
+    transactions = get_transactions(setting_doc, window_start, end_time)
+
+    for txn in transactions:
+        if emp_checkin := create_employee_checkin(txn):
+            if setting_doc.enable_mandatory_checkin:
+                manage_user(emp_checkin)
+
+    frappe.db.set_value(
+        "ZKTeco Biometric Settings",
+        setting_doc.name,
+        "last_fetched_time",
+        end_time,
+    )
+    frappe.db.commit()
+
+
+def ensure_valid_token(setting_doc: Document) -> None:
+    """Refresh the JWT in isolation so an auth hiccup can't kill the whole run."""
+    if not setting_doc.is_token_expired():
+        return
+    try:
+        setting_doc.generate_token()
+        frappe.db.set_value(
+            "ZKTeco Biometric Settings",
+            setting_doc.name,
+            {
+                "token": setting_doc.token,
+                "issued_at": setting_doc.issued_at,
+                "expiry": setting_doc.expiry,
+            },
+            update_modified=False,
+        )
+        frappe.db.commit()
+    except Exception:
+        frappe.log_error(
+            title="ZKTeco Token Refresh Failed", message=frappe.get_traceback()
+        )
+
+
+def get_transactions(setting_doc: Document, start_time=None, end_time=None) -> list[dict]:
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"JWT {setting_doc.token}",
     }
 
     url = f"{setting_doc.url}/iclock/api/transactions/"
-
-    end_time = get_datetime()
-
-    start_time = (
-        setting_doc.last_fetched_time
-        if setting_doc.last_fetched_time
-        else None
-    ) if not start_time else start_time
-    # start_time = (datetime.combine(today, time()).strftime("%Y-%m-%d %H:%M:%S"))
+    end_time = end_time or get_datetime()
 
     params = {
-        "start_time": (start_time.strftime("%Y-%m-%d %H:%M:%S")) if start_time else None,
-        "end_time": (end_time.strftime("%Y-%m-%d %H:%M:%S")),
+        "start_time": start_time.strftime("%Y-%m-%d %H:%M:%S") if start_time else None,
+        "end_time": end_time.strftime("%Y-%m-%d %H:%M:%S"),
         "page_size": 2500,
+        "page": 1,
     }
 
     integration_request_log = create_request_log(
@@ -70,40 +106,53 @@ def get_transactions(setting_doc: Document, start_time = None) -> list[dict]:
         reference_docname=setting_doc.name,
     )
 
+    transactions: list[dict] = []
     try:
-        response = make_http_request(
-            method="GET", url=url, headers=headers, params=params
+        # Walk every page; BioTime caps a response and returns `next` when more
+        # rows exist. Without this, anything past the first page is silently lost.
+        while True:
+            response = make_http_request(
+                method="GET", url=url, headers=headers, params=params
+            )
+
+            if not response or not response.get("data"):
+                break
+
+            transactions.extend(response["data"])
+
+            if not response.get("next"):
+                break
+            params["page"] += 1
+
+        update_integration_request_log(
+            integration_request_log,
+            status="Completed",
+            response={"fetched": len(transactions)},
         )
-
-        if response and response.get("data"):
-
-            frappe.db.set_value(
-                "ZKTeco Biometric Settings",
-                setting_doc.name,
-                "last_fetched_time",
-                get_datetime(),
-            )
-
-            update_integration_request_log(
-                integration_request_log, status="Completed", response=response
-            )
-
-            return response["data"]
+        return transactions
     except Exception as e:
         update_integration_request_log(
             integration_request_log, status="Failed", error=str(e)
         )
         frappe.log_error(frappe.get_traceback(), str(e))
+        # Re-raise so the caller does NOT advance the watermark on a failed fetch.
+        raise
 
 
 def create_employee_checkin(transaction: dict) -> None:
+    employee = frappe.db.get_value(
+        "Employee", {"attendance_device_id": transaction.get("emp_code")}, "name"
+    )
+    if not employee:
+        # Unmapped device id — skip rather than inserting an orphan checkin.
+        return
+
+    log_type = map_checkin(transaction.get("punch_state_display"))
+    punch_time = transaction.get("punch_time")
+
     if frappe.db.exists(
         "Employee Checkin",
-        {
-            "employee": frappe.get_all("Employee", filters={"attendance_device_id" : transaction.get("emp_code")})[0]["name"] if frappe.get_all("Employee", filters={"attendance_device_id" : transaction.get("emp_code")}) else None ,
-            "time": transaction.get("punch_time"),
-            "log_type": map_checkin(transaction.get("punch_state_display")),
-        },
+        {"employee": employee, "time": punch_time, "log_type": log_type},
     ):
         return
 
@@ -112,16 +161,16 @@ def create_employee_checkin(transaction: dict) -> None:
         employee_checkin = frappe.get_doc(
             {
                 "doctype": "Employee Checkin",
-                "employee": frappe.get_all("Employee", filters={"attendance_device_id" : transaction.get("emp_code")})[0]["name"] if frappe.get_all("Employee", filters={"attendance_device_id" : transaction.get("emp_code")}) else None,
-                "time": transaction.get("punch_time"),
-                "log_type": map_checkin(transaction.get("punch_state_display")),
-                "device_id":transaction.get("terminal_sn"),
+                "employee": employee,
+                "time": punch_time,
+                "log_type": log_type,
+                "device_id": transaction.get("terminal_sn"),
             }
         )
         employee_checkin.insert(ignore_permissions=True)
         return employee_checkin
 
-    except Exception as e:
+    except Exception:
         frappe.log_error(
             title="Employee Checkin Creation Error", message=frappe.get_traceback()
         )
